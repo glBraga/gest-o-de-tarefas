@@ -41,7 +41,7 @@ SessionLocal = sessionmaker(bind=ENGINE)
 # --- 4. MODELOS ---
 class Project(Base):
     __tablename__ = 'projects'
-    __table_args__ = {'extend_existing': True}
+    __table_args__ = {'extend_existing': True} # Isso força o Python a aceitar novas colunas
     id = Column(Integer, primary_key=True)
     name = Column(String, nullable=False)
     user_id = Column(UUID(as_uuid=True))
@@ -49,7 +49,7 @@ class Project(Base):
 
 class Task(Base):
     __tablename__ = 'tasks'
-    __table_args__ = {'extend_existing': True}
+    __table_args__ = {'extend_existing': True} # Isso força o Python a aceitar novas colunas
     id = Column(Integer, primary_key=True)
     project_id = Column(Integer, ForeignKey('projects.id'))
     parent_id = Column(Integer, ForeignKey('tasks.id'), nullable=True)
@@ -187,4 +187,5 @@ else:
 
 # --- 9. FECHAMENTO SEGURO ---
 s.close()
+
 
