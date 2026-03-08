@@ -116,29 +116,18 @@ def complete_task(task_id):
 # --- 7. DASHBOARD E INTERFACE ---
 with st.sidebar:
     st.title("⚙️ Painel")
-    st.write(f"Conectado: {st.session_state.user.email}")
+    
+    # AJUSTE SEGURO AQUI:
+    if 'user' in st.session_state and st.session_state.user:
+        # Tenta pegar o email de duas formas comuns (como objeto ou como dicionário)
+        user_email = getattr(st.session_state.user, 'email', 'Usuário Logado')
+        st.write(f"Conectado: {user_email}")
+    
     if st.button("Sair"):
         supabase.auth.sign_out()
-        del st.session_state.user
+        if 'user' in st.session_state:
+            del st.session_state.user
         st.rerun()
-    st.divider()
-    
-    s = get_session()
-    projects = s.query(Project).filter(Project.user_id == uid).all()
-    
-    st.subheader("Projetos")
-    for p in projects:
-        col_p, col_d = st.columns([4, 1])
-        if col_p.button(f"📁 {p.name}", key=f"p_{p.id}", use_container_width=True):
-            st.session_state.active_project = p.id
-        if col_d.button("🗑️", key=f"del_p_{p.id}"):
-            s.delete(p); s.commit(); st.rerun()
-            
-    with st.popover("➕ Novo Projeto", use_container_width=True):
-        new_p_name = st.text_input("Nome do Projeto")
-        if st.button("Criar Projeto"):
-            s.add(Project(name=new_p_name, user_id=uid))
-            s.commit(); st.rerun()
 
 # --- 8. CONTEÚDO PRINCIPAL ---
 if "active_project" in st.session_state:
@@ -205,6 +194,7 @@ else:
     st.info("Selecione um projeto na barra lateral para começar.")
 
 s.close()
+
 
 
 
