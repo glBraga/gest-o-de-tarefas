@@ -49,14 +49,21 @@ class Project(Base):
 
 class Task(Base):
     __tablename__ = 'tasks'
-    __table_args__ = {'extend_existing': True} # Isso força o Python a aceitar novas colunas
+    __table_args__ = {'extend_existing': True}
     id = Column(Integer, primary_key=True)
     project_id = Column(Integer, ForeignKey('projects.id'))
     parent_id = Column(Integer, ForeignKey('tasks.id'), nullable=True)
     title = Column(String, nullable=False)
-    status = Column(String, default="Pendente")
+    status = Column(String, default="Pendente") # Pendente, Em Andamento, Concluído
     priority = Column(String, default="Média")
+    area = Column(String) # Financeiro, Operacional, etc.
     due_date = Column(DateTime)
+    created_at = Column(DateTime, default=datetime.now)
+    
+    # Campos para o Cronômetro
+    start_time = Column(DateTime, nullable=True)
+    total_seconds = Column(Integer, default=0)
+    
     user_id = Column(UUID(as_uuid=True))
     
     project = relationship("Project", back_populates="tasks")
@@ -143,8 +150,8 @@ if "active_project" in st.session_state:
         tasks = s.query(Task).filter(
     Task.project_id == p_id, 
     Task.user_id == uid, 
-    Task.parent_id.is_(None)  # Use .is_(None) em vez de == None
-).all()
+    Task.parent_id == None
+    ).all()
         
         # Métricas simples
         total = len(tasks)
@@ -156,6 +163,34 @@ if "active_project" in st.session_state:
         # Formulário de Nova Tarefa
         with st.expander("➕ Nova Tarefa"):
             with st.form("new_task"):
+                with st.container(border=True):
+    col_t, col_st, col_time, col_a = st.columns([3, 1, 1, 1])
+    
+    col_t.write(f"**{t.title}**")
+    col_t.caption(f"Área: {t.area} | Criada em: {t.created_at.strftime('%d/%m %H:%M')}")
+    
+    # Dropdown de Status
+    new_status = col_st.selectbox("Status", ["Pendente", "Em Andamento", "Concluído"], 
+                                 index=["Pendente", "Em Andamento", "Concluído"].index(t.status),
+                                 key=f"status_{t.id}")
+    if new_status != t.status:
+        t.status = new_status
+        s.commit()
+        st.rerun()
+
+    # Lógica do Cronômetro
+    if t.start_time is None:
+        if col_time.button("▶️ Iniciar", key=f"start_{t.id}"):
+            t.start_time = datetime.now()
+            s.commit()
+            st.rerun()
+    else:
+        if col_time.button("⏹️ Parar", key=f"stop_{t.id}"):
+            diff = (datetime.now() - t.start_time).total_seconds()
+            t.total_seconds += int(diff)
+            t.start_time = None
+            s.commit()
+            st.rerun()
                 t_title = st.text_input("Título")
                 t_priority = st.selectbox("Prioridade", ["Baixa", "Média", "Alta"])
                 t_date = st.date_input("Prazo")
@@ -187,5 +222,4 @@ else:
 
 # --- 9. FECHAMENTO SEGURO ---
 s.close()
-
 
