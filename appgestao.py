@@ -164,61 +164,54 @@ if "active_project" in st.session_state:
         with st.expander("➕ Nova Tarefa"):
             with st.form("new_task"):
                 with st.container(border=True):
-    col_t, col_st, col_time, col_a = st.columns([3, 1, 1, 1])
-    
-    col_t.write(f"**{t.title}**")
-    col_t.caption(f"Área: {t.area} | Criada em: {t.created_at.strftime('%d/%m %H:%M')}")
-    
-    # Dropdown de Status
-    new_status = col_st.selectbox("Status", ["Pendente", "Em Andamento", "Concluído"], 
-                                 index=["Pendente", "Em Andamento", "Concluído"].index(t.status),
-                                 key=f"status_{t.id}")
-    if new_status != t.status:
-        t.status = new_status
-        s.commit()
-        st.rerun()
-
-    # Lógica do Cronômetro
-    if t.start_time is None:
-        if col_time.button("▶️ Iniciar", key=f"start_{t.id}"):
-            t.start_time = datetime.now()
-            s.commit()
-            st.rerun()
-    else:
-        if col_time.button("⏹️ Parar", key=f"stop_{t.id}"):
-            diff = (datetime.now() - t.start_time).total_seconds()
-            t.total_seconds += int(diff)
-            t.start_time = None
-            s.commit()
-            st.rerun()
-                t_title = st.text_input("Título")
-                t_priority = st.selectbox("Prioridade", ["Baixa", "Média", "Alta"])
-                t_date = st.date_input("Prazo")
-                if st.form_submit_button("Salvar"):
-                    new_t = Task(title=t_title, priority=t_priority, due_date=t_date, project_id=p_id, user_id=uid)
-                    s.add(new_t)
-                    s.commit()
-                    st.rerun()
-
-        # Listagem
-        for t in tasks:
-            with st.container(border=True):
-                col_t, col_a = st.columns([4, 1])
-                col_t.write(f"**{t.title}** ({t.priority})")
-                if col_a.button("🗑️", key=f"t_del_{t.id}"):
-                    s.delete(t)
-                    s.commit()
-                    st.rerun()
+                col_t, col_st, col_time, col_a = st.columns([3, 1, 1, 1])
                 
-                # Subtasks
-                subs = s.query(Task).filter(
-    Task.parent_id == t.id,
-    Task.user_id == uid
-).all()
+                with col_t:
+                    st.write(f"**{t.title}**")
+                    area_nome = t.area if t.area else "Sem Área"
+                    st.caption(f"📍 {area_nome} | 📅 {t.due_date.strftime('%d/%m') if t.due_date else ''}")
+
+                with col_st:
+                    status_options = ["Pendente", "Em Andamento", "Concluído"]
+                    try:
+                        current_idx = status_options.index(t.status)
+                    except:
+                        current_idx = 0
+                        
+                    new_status = st.selectbox("Status", status_options, index=current_idx, key=f"st_{t.id}", label_visibility="collapsed")
+                    if new_status != t.status:
+                        t.status = new_status
+                        s.commit()
+                        st.rerun()
+
+                with col_time:
+                    if t.start_time is None:
+                        if st.button("▶️", key=f"play_{t.id}", help="Iniciar Cronômetro"):
+                            t.start_time = datetime.now()
+                            s.commit()
+                            st.rerun()
+                    else:
+                        if st.button("⏹️", key=f"stop_{t.id}", help="Parar Cronômetro", type="primary"):
+                            diff = (datetime.now() - t.start_time).total_seconds()
+                            t.total_seconds += int(diff)
+                            t.start_time = None
+                            s.commit()
+                            st.rerun()
+                    
+                    # Mostrar tempo acumulado
+                    mins = t.total_seconds // 60
+                    st.caption(f"⏱️ {mins} min")
+
+                with col_a:
+                    if st.button("🗑️", key=f"t_del_{t.id}"):
+                        s.delete(t)
+                        s.commit()
+                        st.rerun()
+                
+                # --- Subtasks (Hierarquia) ---
+                subs = s.query(Task).filter(Task.parent_id == t.id).all()
                 for sb in subs:
-                    st.caption(f"  ↳ {sb.title}")
-else:
-    st.info("Selecione um projeto na barra lateral.")
+                    st.markdown(f"&nbsp;&nbsp;&nbsp;&nbsp;↳ <small>{sb.title} - {sb.status}</small>", unsafe_with_html=True)
 
 # --- 9. FECHAMENTO SEGURO ---
 s.close()
