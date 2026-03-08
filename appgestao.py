@@ -13,33 +13,35 @@ st.set_page_config(page_title="TaskProd Pro Cloud", layout="wide", page_icon="�
 # --- CONEXÃO SUPABASE (POSTGRESQL) ---
 def get_engine():
     try:
-        # Puxa a URL do Secrets
+        # 1. Pega a URL dos Secrets
         db_url = st.secrets["connections"]["postgresql"]["url"]
         
-        # Correção para garantir postgresql://
+        # 2. Correção de protocolo para SQLAlchemy
         if db_url.startswith("postgres://"):
             db_url = db_url.replace("postgres://", "postgresql://", 1)
         
-        # Adiciona sslmode=require se não estiver na URL
+        # 3. LIMPEZA CRÍTICA: Remove o parâmetro pgbouncer que causa o erro ProgrammingError
+        if "pgbouncer=true" in db_url:
+            db_url = db_url.replace("pgbouncer=true", "")
+            # Ajusta os símbolos de interrogação e e-comercial que podem sobrar
+            db_url = db_url.replace("?&", "?").replace("&&", "&").strip("?").strip("&")
+
+        # 4. Garante que sslmode=require esteja presente (Supabase exige)
         if "sslmode=require" not in db_url:
             separator = "&" if "?" in db_url else "?"
             db_url += f"{separator}sslmode=require"
-
+        
+        # 5. Criação do engine com parâmetros de estabilidade
         return create_engine(
             db_url,
-            pool_size=10,         # Aumentado para lidar com o Pooler
-            max_overflow=20,
-            pool_timeout=30,      # Espera até 30s antes de dar erro
-            pool_recycle=1800,    # Reinicia conexões a cada 30min
-            pool_pre_ping=True,    # Testa se a conexão caiu antes de cada comando
+            pool_size=5,
+            max_overflow=10,
+            pool_pre_ping=True,
+            pool_recycle=300 # Fecha conexões ociosas a cada 5 min para não lotar o pooler
         )
     except Exception as e:
-        st.error(f"Erro Crítico na Configuração do Banco: {e}")
+        st.error(f"Erro na configuração do Banco: {e}")
         st.stop()
-
-ENGINE = get_engine()
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=ENGINE)
-Base = declarative_base()
 
 # --- MODELOS DO BANCO ---
 class Project(Base):
