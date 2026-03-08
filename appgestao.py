@@ -7,43 +7,49 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 import os
 
-# --- CONFIGURAÇÃO DA PÁGINA ---
+# --- 1. CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(page_title="TaskProd Pro Cloud", layout="wide", page_icon="🚀")
 
-# --- CONEXÃO SUPABASE (POSTGRESQL) ---
+# --- 2. CONFIGURAÇÃO DO BANCO DE DADOS (SUPABASE) ---
+# Definimos a base para os modelos globalmente para evitar o erro "Base is not defined"
+Base = declarative_base()
+
 def get_engine():
     try:
-        # 1. Pega a URL dos Secrets
+        # Puxa a URL dos Secrets do Streamlit Cloud
         db_url = st.secrets["connections"]["postgresql"]["url"]
         
-        # 2. Correção de protocolo para SQLAlchemy
+        # Correção de protocolo (SQLAlchemy exige postgresql://)
         if db_url.startswith("postgres://"):
             db_url = db_url.replace("postgres://", "postgresql://", 1)
         
-        # 3. LIMPEZA CRÍTICA: Remove o parâmetro pgbouncer que causa o erro ProgrammingError
+        # LIMPEZA: Remove o parâmetro pgbouncer que causa erro no psycopg2
         if "pgbouncer=true" in db_url:
             db_url = db_url.replace("pgbouncer=true", "")
-            # Ajusta os símbolos de interrogação e e-comercial que podem sobrar
             db_url = db_url.replace("?&", "?").replace("&&", "&").strip("?").strip("&")
 
-        # 4. Garante que sslmode=require esteja presente (Supabase exige)
+        # Garante SSL (Obrigatório no Supabase)
         if "sslmode=require" not in db_url:
             separator = "&" if "?" in db_url else "?"
             db_url += f"{separator}sslmode=require"
         
-        # 5. Criação do engine com parâmetros de estabilidade
+        # Criação do engine com parâmetros de estabilidade
         return create_engine(
             db_url,
             pool_size=5,
             max_overflow=10,
             pool_pre_ping=True,
-            pool_recycle=300 # Fecha conexões ociosas a cada 5 min para não lotar o pooler
+            pool_recycle=300
         )
     except Exception as e:
-        st.error(f"Erro na configuração do Banco: {e}")
+        st.error(f"Erro ao configurar conexão: {e}")
         st.stop()
 
-# --- MODELOS DO BANCO ---
+# Inicializa ENGINE e SESSION
+ENGINE = get_engine()
+SessionLocal = sessionmaker(bind=ENGINE)
+
+# --- 3. MODELOS DO BANCO ---
 class Project(Base):
     __tablename__ = 'projects'
     id = Column(Integer, primary_key=True)
@@ -65,16 +71,16 @@ class Task(Base):
     total_seconds = Column(Float, default=0.0)
     project = relationship("Project", back_populates="tasks")
 
-# Criar tabelas se não existirem
+# Cria as tabelas no Supabase se não existirem
 try:
     Base.metadata.create_all(ENGINE)
 except Exception as e:
-    st.error(f"Erro ao conectar ao Supabase: {e}")
+    st.error(f"Erro ao criar tabelas no Supabase: {e}")
     st.stop()
 
 def get_session(): return SessionLocal()
 
-# --- FUNÇÕES DE LÓGICA ---
+# --- 4. FUNÇÕES DE LÓGICA ---
 def toggle_timer(task_id):
     session = get_session()
     task = session.query(Task).get(task_id)
@@ -101,18 +107,16 @@ def complete_task(task_id):
 def format_time(seconds):
     return str(timedelta(seconds=int(seconds or 0)))
 
-# --- CARREGAMENTO DE DADOS ---
+# --- 5. CARREGAMENTO DE DADOS ---
 session = get_session()
 all_projects = session.query(Project).all()
 proj_map = {p.name: p.id for p in all_projects}
-# Carregamos tarefas para o Dashboard
 all_tasks_df = pd.read_sql(session.query(Task).statement, ENGINE)
 session.close()
 
-# --- SIDEBAR (NAVEGAÇÃO) ---
+# --- 6. INTERFACE (SIDEBAR) ---
 with st.sidebar:
     st.title("🎯 TaskProd v6")
-    
     with st.expander("🆕 Novo Projeto"):
         new_p = st.text_input("Nome do Projeto")
         if st.button("Criar"):
@@ -141,10 +145,9 @@ with st.sidebar:
     st.divider()
     show_finished = st.checkbox("Mostrar concluídas", value=True)
 
-# --- CORPO PRINCIPAL ---
-tab_dash, tab_board = st.tabs(["📊 Dashboard Geral", "📋 Lista de Tarefas"])
+# --- 7. TABS ---
+tab_dash, tab_board = st.tabs(["📊 Dashboard", "📋 Projetos e Tarefas"])
 
-# TAB DASHBOARD
 with tab_dash:
     if not all_tasks_df.empty:
         c1, c2, c3 = st.columns(3)
@@ -157,18 +160,15 @@ with tab_dash:
                      color='status', color_discrete_map={'Pendente':'#94a3b8', 'Fazendo':'#3b82f6', 'Concluído':'#10b981'})
         st.plotly_chart(fig, use_container_width=True)
     else:
-        st.info("Crie sua primeira tarefa para ver os gráficos!")
+        st.info("Crie uma tarefa para ver as métricas.")
 
-# TAB TAREFAS
 with tab_board:
-    # Form de Criação de Tarefa Principal
     with st.expander("➕ Adicionar Nova Tarefa Principal", expanded=False):
         with st.form("f_new"):
-            t_name = st.text_input("Título da Tarefa")
+            t_name = st.text_input("Título")
             col_a, col_b = st.columns(2)
-            t_area = col_a.selectbox("Área Solicitante", ["TI", "RH", "Financeiro", "Comercial", "Operacional", "Diretoria"])
+            t_area = col_a.selectbox("Área", ["TI", "RH", "Financeiro", "Comercial", "Operacional", "Diretoria"])
             
-            # Ajuste de projeto padrão baseado no filtro da sidebar
             default_proj_idx = 0
             if st.session_state.selected_proj_id != "Todos":
                 proj_ids = list(proj_map.values())
@@ -176,15 +176,12 @@ with tab_board:
                     default_proj_idx = proj_ids.index(st.session_state.selected_proj_id)
 
             t_proj = col_b.selectbox("Projeto", list(proj_map.keys()), index=default_proj_idx)
-            t_notes = st.text_area("Observações / Detalhes")
-            if st.form_submit_button("Criar Tarefa"):
+            t_notes = st.text_area("Notas")
+            if st.form_submit_button("Criar"):
                 if t_name and t_proj:
-                    s = get_session()
-                    s.add(Task(title=t_name, area=t_area, project_id=proj_map[t_proj], notes=t_notes))
-                    s.commit(); s.close()
-                    st.rerun()
+                    s = get_session(); s.add(Task(title=t_name, area=t_area, project_id=proj_map[t_proj], notes=t_notes))
+                    s.commit(); s.close(); st.rerun()
 
-    # Lógica de Exibição
     display_projects = all_projects
     if st.session_state.selected_proj_id != "Todos":
         display_projects = [p for p in all_projects if p.id == st.session_state.selected_proj_id]
@@ -196,23 +193,18 @@ with tab_board:
         
         for t in tasks:
             if not show_finished and t.status == "Concluído": continue
-            
             with st.container(border=True):
-                c_timer, c_info, c_actions = st.columns([1.5, 5, 2])
-                
+                c_timer, c_info, c_actions = st.columns([1.5, 5, 2.5])
                 with c_timer:
                     curr = t.total_seconds or 0
                     if t.is_running: curr += (datetime.now() - t.last_start_time).total_seconds()
                     st.code(format_time(curr))
                     if st.button("▶️/⏸️", key=f"p_{t.id}"): toggle_timer(t.id); st.rerun()
-
                 with c_info:
                     st.markdown(f"### {'🟢' if t.status == 'Concluído' else '🟡' if t.status == 'Fazendo' else '⚪'} {t.title}")
-                    dt_cria = t.created_at.strftime('%d/%m %H:%M') if t.created_at else "---"
-                    st.markdown(f"**Criação:** {dt_cria} | **Área:** {t.area}")
+                    st.caption(f"Criação: {t.created_at.strftime('%d/%m %H:%M') if t.created_at else ''} | Área: {t.area}")
                     if t.notes: st.info(f"📝 {t.notes}")
                     
-                    # LISTA DE SUBTASKS
                     subs = s.query(Task).filter(Task.parent_id == t.id).all()
                     for sb in subs:
                         sc1, sc2, sc3 = st.columns([0.3, 4, 1])
@@ -223,22 +215,15 @@ with tab_board:
 
                 with c_actions:
                     if t.status != "Concluído":
-                        if st.button("Concluir ✅", key=f"done_{t.id}", use_container_width=True):
-                            complete_task(t.id); st.rerun()
-                    if st.button("➕ Subtask", key=f"add_s_{t.id}", use_container_width=True):
-                        st.session_state[f"sub_{t.id}"] = True
-                    if st.button("🗑️", key=f"del_{t.id}", use_container_width=True):
-                        s.delete(t); s.commit(); st.rerun()
+                        if st.button("Concluir ✅", key=f"done_{t.id}", use_container_width=True): complete_task(t.id); st.rerun()
+                    if st.button("➕ Subtask", key=f"add_s_{t.id}", use_container_width=True): st.session_state[f"sub_{t.id}"] = True
+                    if st.button("🗑️ Deletar", key=f"del_{t.id}", use_container_width=True): s.delete(t); s.commit(); st.rerun()
 
-                # Form Subtask Dinâmico
                 if st.session_state.get(f"sub_{t.id}"):
                     with st.form(f"f_s_{t.id}"):
-                        sub_n = st.text_input("Título da Subtarefa")
-                        if st.form_submit_button("Confirmar"):
-                            s_s = get_session()
-                            s_s.add(Task(title=sub_n, project_id=p.id, parent_id=t.id))
-                            s_s.commit(); s_s.close()
-                            st.session_state[f"sub_{t.id}"] = False
-                            st.rerun()
+                        sub_n = st.text_input("Nome da Subtarefa")
+                        if st.form_submit_button("Adicionar"):
+                            s_s = get_session(); s_s.add(Task(title=sub_n, project_id=p.id, parent_id=t.id))
+                            s_s.commit(); s_s.close(); st.session_state[f"sub_{t.id}"] = False; st.rerun()
         s.close()
         st.divider()
