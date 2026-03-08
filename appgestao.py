@@ -41,7 +41,7 @@ SessionLocal = sessionmaker(bind=ENGINE)
 # --- 4. MODELOS ---
 class Project(Base):
     __tablename__ = 'projects'
-    __table_args__ = {'extend_existing': True} # Isso força o Python a aceitar novas colunas
+    __table_args__ = {'extend_existing': True}
     id = Column(Integer, primary_key=True)
     name = Column(String, nullable=False)
     user_id = Column(UUID(as_uuid=True))
@@ -54,16 +54,13 @@ class Task(Base):
     project_id = Column(Integer, ForeignKey('projects.id'))
     parent_id = Column(Integer, ForeignKey('tasks.id'), nullable=True)
     title = Column(String, nullable=False)
-    status = Column(String, default="Pendente") # Pendente, Em Andamento, Concluído
+    status = Column(String, default="Pendente")
     priority = Column(String, default="Média")
-    area = Column(String) # Financeiro, Operacional, etc.
+    area = Column(String)
     due_date = Column(DateTime)
     created_at = Column(DateTime, default=datetime.now)
-    
-    # Campos para o Cronômetro
     start_time = Column(DateTime, nullable=True)
     total_seconds = Column(Integer, default=0)
-    
     user_id = Column(UUID(as_uuid=True))
     
     project = relationship("Project", back_populates="tasks")
@@ -95,7 +92,7 @@ def login_screen():
             if st.button("Cadastrar", use_container_width=True):
                 try:
                     supabase.auth.sign_up({"email": new_email, "password": new_pass})
-                    st.info("Verifique seu email (ou tente logar se desativou a confirmação).")
+                    st.info("Verifique seu email para confirmar!")
                 except Exception as e:
                     st.error(f"Erro: {e}")
 
@@ -109,18 +106,14 @@ s = SessionLocal()
 
 # --- 7. SIDEBAR ---
 with st.sidebar:
-    # Acesso seguro ao email do usuário
     user_email = getattr(st.session_state.user, 'email', 'Usuário')
     st.write(f"👤 {user_email}")
-    
     if st.button("Sair"):
         supabase.auth.sign_out()
         del st.session_state.user
         st.rerun()
-    
     st.divider()
     st.subheader("Meus Projetos")
-    
     projects = s.query(Project).filter(Project.user_id == uid).all()
     for p in projects:
         col_p, col_d = st.columns([4, 1])
@@ -130,7 +123,6 @@ with st.sidebar:
             s.delete(p)
             s.commit()
             st.rerun()
-            
     with st.popover("➕ Novo Projeto", use_container_width=True):
         new_p_name = st.text_input("Nome")
         if st.button("Criar"):
@@ -145,54 +137,38 @@ if "active_project" in st.session_state:
     
     if project:
         st.title(f"Projeto: {project.name}")
+        tasks = s.query(Task).filter(Task.project_id == p_id, Task.user_id == uid, Task.parent_id == None).all()
         
-        # Query de tarefas principais
-        tasks = s.query(Task).filter(
-    Task.project_id == p_id, 
-    Task.user_id == uid, 
-    Task.parent_id == None
-    ).all()
-        
-        # Métricas simples
-        total = len(tasks)
-        done = len([t for t in tasks if t.status == "Concluído"])
         c1, c2 = st.columns(2)
-        c1.metric("Tarefas", total)
-        c2.metric("Concluídas", done)
+        c1.metric("Tarefas", len(tasks))
+        c2.metric("Concluídas", len([t for t in tasks if t.status == "Concluído"]))
         
-        # Formulário de Nova Tarefa
         with st.expander("➕ Nova Tarefa"):
             with st.form("new_task"):
-                t_title = st.text_input("Título da Tarefa")
-                # Adicionando as Áreas que você pediu
-                t_area = st.selectbox("Área Responsável", ["Financeiro", "Operacional", "Vendas", "RH", "TI", "Diretoria"])
+                t_title = st.text_input("Título")
+                t_area = st.selectbox("Área", ["Financeiro", "Operacional", "Vendas", "RH", "TI", "Diretoria"])
                 t_priority = st.selectbox("Prioridade", ["Baixa", "Média", "Alta"], index=1)
-                t_date = st.date_input("Prazo Final")
-                
-                if st.form_submit_button("Salvar Tarefa"):
+                t_date = st.date_input("Prazo")
+                if st.form_submit_button("Salvar"):
                     if t_title:
-                        new_t = Task(
-                            title=t_title, 
-                            area=t_area, 
-                            priority=t_priority, 
-                            due_date=datetime.combine(t_date, datetime.min.time()), 
-                            project_id=p_id, 
-                            user_id=uid
-                        )
+                        new_t = Task(title=t_title, area=t_area, priority=t_priority, due_date=datetime.combine(t_date, datetime.min.time()), project_id=p_id, user_id=uid)
                         s.add(new_t)
                         s.commit()
                         st.rerun()
-                    else:
-                        st.error("Dê um título para a tarefa!")
+
+        # --- LISTAGEM DE TAREFAS (AQUI ESTAVA O ERRO) ---
+        for t in tasks:
+            with st.container(border=True):
+                col_t, col_st, col_time, col_a = st.columns([3, 1, 1, 1])
+                
+                with col_t:
+                    st.write(f"**{t.title}**")
+                    st.caption(f"📍 {t.area} | 📅 {t.due_date.strftime('%d/%m') if t.due_date else ''}")
 
                 with col_st:
-                    status_options = ["Pendente", "Em Andamento", "Concluído"]
-                    try:
-                        current_idx = status_options.index(t.status)
-                    except:
-                        current_idx = 0
-                        
-                    new_status = st.selectbox("Status", status_options, index=current_idx, key=f"st_{t.id}", label_visibility="collapsed")
+                    status_opts = ["Pendente", "Em Andamento", "Concluído"]
+                    curr_idx = status_opts.index(t.status) if t.status in status_opts else 0
+                    new_status = st.selectbox("Status", status_opts, index=curr_idx, key=f"st_{t.id}", label_visibility="collapsed")
                     if new_status != t.status:
                         t.status = new_status
                         s.commit()
@@ -200,21 +176,18 @@ if "active_project" in st.session_state:
 
                 with col_time:
                     if t.start_time is None:
-                        if st.button("▶️", key=f"play_{t.id}", help="Iniciar Cronômetro"):
+                        if st.button("▶️", key=f"play_{t.id}"):
                             t.start_time = datetime.now()
                             s.commit()
                             st.rerun()
                     else:
-                        if st.button("⏹️", key=f"stop_{t.id}", help="Parar Cronômetro", type="primary"):
+                        if st.button("⏹️", key=f"stop_{t.id}", type="primary"):
                             diff = (datetime.now() - t.start_time).total_seconds()
                             t.total_seconds += int(diff)
                             t.start_time = None
                             s.commit()
                             st.rerun()
-                    
-                    # Mostrar tempo acumulado
-                    mins = t.total_seconds // 60
-                    st.caption(f"⏱️ {mins} min")
+                    st.caption(f"⏱️ {(t.total_seconds or 0) // 60} min")
 
                 with col_a:
                     if st.button("🗑️", key=f"t_del_{t.id}"):
@@ -222,11 +195,11 @@ if "active_project" in st.session_state:
                         s.commit()
                         st.rerun()
                 
-                # --- Subtasks (Hierarquia) ---
+                # Subtasks
                 subs = s.query(Task).filter(Task.parent_id == t.id).all()
                 for sb in subs:
                     st.markdown(f"&nbsp;&nbsp;&nbsp;&nbsp;↳ <small>{sb.title} - {sb.status}</small>", unsafe_with_html=True)
+else:
+    st.info("Selecione um projeto na barra lateral.")
 
-# --- 9. FECHAMENTO SEGURO ---
 s.close()
-
