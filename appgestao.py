@@ -84,9 +84,12 @@ def login_screen():
             if st.button("Login", use_container_width=True):
                 try:
                     res = supabase.auth.sign_in_with_password({"email": email, "password": password})
-                    st.session_state.user = res.user
-                    st.rerun()
-                except: st.error("Email ou senha incorretos.")
+                    if res.user:
+            st.session_state.user = res.user
+            st.success("Logado com sucesso! Redirecionando...")
+            st.rerun() # O rerun agora vai encontrar o user no session_state
+    except Exception as e:
+        st.error("Email ou senha incorretos.")
         with tab2:
             new_email = st.text_input("Novo Email", key="r_email")
             new_pass = st.text_input("Nova Senha", type="password", key="r_pass")
@@ -204,3 +207,4 @@ else:
     st.info("Selecione um projeto na barra lateral para começar.")
 
 s.close()
+
