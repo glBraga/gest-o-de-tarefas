@@ -40,19 +40,21 @@ SessionLocal = sessionmaker(bind=ENGINE)
 def get_session():
     return SessionLocal()
 
-# --- 4. MODELOS (Atualizados com user_id para RLS) ---
+# --- 4. MODELOS (Atualizados e Corrigidos) ---
+from sqlalchemy.orm import backref # Adicione esta importação no topo se não houver
+
 class Project(Base):
     __tablename__ = 'projects'
     id = Column(Integer, primary_key=True)
     name = Column(String, nullable=False)
-    user_id = Column(UUID(as_uuid=True)) # Filtro RLS
-    tasks = relationship("Task", back_populates="project", cascade="all, delete", foreign_keys="Task.project_id")
+    user_id = Column(UUID(as_uuid=True)) 
+    tasks = relationship("Task", back_populates="project", cascade="all, delete")
 
 class Task(Base):
     __tablename__ = 'tasks'
     id = Column(Integer, primary_key=True)
     project_id = Column(Integer, ForeignKey('projects.id'))
-    parent_id = Column(Integer, ForeignKey('tasks.id'), nullable=True)
+    parent_id = Column(Integer, ForeignKey('tasks.id'), nullable=True) # Para subtasks
     title = Column(String, nullable=False)
     description = Column(String)
     status = Column(String, default="Pendente")
@@ -61,12 +63,11 @@ class Task(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     completed_at = Column(DateTime)
     notes = Column(String)
-    user_id = Column(UUID(as_uuid=True)) # Filtro RLS
+    user_id = Column(UUID(as_uuid=True)) 
     
     project = relationship("Project", back_populates="tasks")
-    subtasks = relationship("Task", backref=st.orm.backref('parent', remote_side=[id]))
-
-Base.metadata.create_all(ENGINE)
+    # CORREÇÃO AQUI: Usando backref do sqlalchemy.orm corretamente
+    subtasks = relationship("Task", backref=backref('parent', remote_side=[id]))
 
 # --- 5. LÓGICA DE AUTENTICAÇÃO ---
 def login_screen():
@@ -200,5 +201,6 @@ if "active_project" in st.session_state:
                             s.commit(); st.rerun()
 else:
     st.info("Selecione um projeto na barra lateral para começar.")
+
 
 s.close()
