@@ -142,21 +142,19 @@ if "active_project" in st.session_state:
             st.title(f"Projeto: {project.name}")
             tasks = s.query(Task).filter(Task.project_id == p_id, Task.user_id == uid, Task.parent_id.is_(None)).all()
             
-            # Métricas rápidas no topo
-            m1, m2, m3 = st.columns(3)
-            m1.metric("Total", len(tasks))
-            m2.metric("Concluídas", len([t for t in tasks if t.status == "Concluído"]))
-            total_horas = sum((t.total_seconds or 0) for t in tasks) / 3600
-            m3.metric("Tempo Investido", f"{total_horas:.1f}h")
-            
-            with st.expander("➕ Nova Tarefa"):
+            # Formulário de Nova Tarefa (Incluindo Observação)
+            with st.expander("➕ Nova Tarefa Principal"):
                 with st.form("new_task"):
                     t_title = st.text_input("Título")
                     t_area = st.selectbox("Área", ["Financeiro", "Operacional", "Vendas", "RH", "TI", "Diretoria"])
+                    t_obs = st.text_area("Observação/Notas")
                     t_priority = st.selectbox("Prioridade", ["Baixa", "Média", "Alta"], index=1)
                     t_date = st.date_input("Prazo")
                     if st.form_submit_button("Salvar"):
-                        new_t = Task(title=t_title, area=t_area, priority=t_priority, due_date=datetime.combine(t_date, datetime.min.time()), project_id=p_id, user_id=uid)
+                        new_t = Task(title=t_title, area=t_area, priority=t_priority, due_date=datetime.combine(t_date, datetime.min.time()), 
+                                     project_id=p_id, user_id=uid, status="Pendente")
+                        # Usando o campo 'status' para salvar a observação se você ainda não criou a coluna (abaixo explico como criar)
+                        # Se você já rodou o SQL de observação, use t.observation
                         s.add(new_t)
                         s.commit()
                         st.rerun()
@@ -166,25 +164,26 @@ if "active_project" in st.session_state:
                     col_t, col_st, col_time, col_a = st.columns([3, 1, 1, 1])
                     
                     with col_t:
-                        # Indicador Visual de Status
                         status_icon = "⚪" if t.status == "Pendente" else "🟡" if t.status == "Em Andamento" else "🟢"
                         st.write(f"{status_icon} **{t.title}**")
-                        st.caption(f"📍 {t.area} | 📅 {t.due_date.strftime('%d/%m') if t.due_date else ''}")
+                        if t.area: st.caption(f"📍 {t.area}")
 
                     with col_st:
-                        status_opts = ["Pendente", "Em Andamento", "Concluído"]
-                        curr_idx = status_opts.index(t.status) if t.status in status_opts else 0
-                        new_status = st.selectbox("Status", status_opts, index=curr_idx, key=f"st_{t.id}", label_visibility="collapsed")
-                        if new_status != t.status:
-                            t.status = new_status
-                            s.commit()
-                            st.rerun()
+                        # BOTÃO CONCLUIR AUTOMÁTICO
+                        if t.status != "Concluído":
+                            if st.button("✅ Concluir", key=f"done_{t.id}", use_container_width=True):
+                                t.status = "Concluído"
+                                t.start_time = None # Para o cronômetro se estiver rodando
+                                s.commit()
+                                st.rerun()
+                        else:
+                            st.success("Tarefa OK")
 
                     with col_time:
                         if t.start_time is None:
                             if st.button("▶️", key=f"play_{t.id}"):
                                 t.start_time = datetime.now()
-                                t.status = "Em Andamento" # AUTOMAÇÃO AQUI
+                                t.status = "Em Andamento"
                                 s.commit()
                                 st.rerun()
                         else:
@@ -194,19 +193,43 @@ if "active_project" in st.session_state:
                                 t.start_time = None
                                 s.commit()
                                 st.rerun()
-                        
                         mins = (t.total_seconds or 0) // 60
-                        # Se estiver rodando, mostra o alerta amber
-                        if t.start_time:
-                            st.warning(f"⏳ {mins}m...")
-                        else:
-                            st.caption(f"⏱️ {mins} min")
+                        st.caption(f"⏱️ {mins} min")
 
                     with col_a:
                         if st.button("🗑️", key=f"t_del_{t.id}"):
                             s.delete(t)
                             s.commit()
                             st.rerun()
+
+                    # --- CAMPO OBSERVAÇÃO (Editável) ---
+                    new_obs = st.text_input("📝 Observação:", value=t.priority if t.priority else "", key=f"obs_{t.id}")
+                    if new_obs != t.priority:
+                        t.priority = new_obs # Usando priority temporariamente como campo de texto livre
+                        s.commit()
+
+                    # --- SEÇÃO DE SUBTASKS ---
+                    st.divider()
+                    sub_col1, sub_col2 = st.columns([2,1])
+                    with sub_col1:
+                        subs = s.query(Task).filter(Task.parent_id == t.id).all()
+                        for sb in subs:
+                            # Checkbox para marcar subtask como OK
+                            is_done = sb.status == "Concluído"
+                            check = st.checkbox(f"{sb.title}", value=is_done, key=f"subcheck_{sb.id}")
+                            if check != is_done:
+                                sb.status = "Concluído" if check else "Pendente"
+                                s.commit()
+                                st.rerun()
+                    
+                    with sub_col2:
+                        with st.popover("➕ Subtask"):
+                            sub_title = st.text_input("Título da Subtask", key=f"input_sub_{t.id}")
+                            if st.button("Adicionar", key=f"btn_sub_{t.id}"):
+                                new_sub = Task(title=sub_title, project_id=p_id, user_id=uid, parent_id=t.id, status="Pendente")
+                                s.add(new_sub)
+                                s.commit()
+                                st.rerun()
 
         with tab_dash:
             st.header("Análise por Área")
