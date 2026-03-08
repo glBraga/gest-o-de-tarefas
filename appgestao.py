@@ -1,53 +1,51 @@
 import streamlit as st
 import pandas as pd
-import plotly.express as px
 from datetime import datetime, timedelta
-from sqlalchemy import create_engine, Column, Integer, String, DateTime, Boolean, ForeignKey, Float, text
+from sqlalchemy import create_engine, Column, Integer, String, DateTime, ForeignKey, text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship, backref
 from sqlalchemy.dialects.postgresql import UUID
-import os
 from supabase import create_client
 
 # --- 1. CONFIGURAÇÃO DA PÁGINA ---
-st.set_page_config(page_title="TaskProd Pro Cloud", layout="wide", page_icon="🚀")
+st.set_page_config(page_title="TaskProd Pro", layout="wide", page_icon="🚀")
 
-# --- 2. CONFIGURAÇÃO SUPABASE AUTH ---
+# --- 2. CONFIGURAÇÃO SUPABASE ---
 if "SUPABASE_URL" not in st.secrets or "SUPABASE_KEY" not in st.secrets:
-    st.error("Configure as chaves SUPABASE_URL e SUPABASE_KEY no Streamlit Cloud.")
+    st.error("Configure as chaves SUPABASE_URL e SUPABASE_KEY nos Secrets.")
     st.stop()
 
-supabase = create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
+@st.cache_resource
+def get_supabase():
+    return create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
 
-# --- 3. CONFIGURAÇÃO DO BANCO (SQLAlchemy) ---
+supabase = get_supabase()
+
+# --- 3. CONFIGURAÇÃO BANCO (SQLAlchemy) ---
 Base = declarative_base()
 
+@st.cache_resource
 def get_engine():
     try:
         db_url = st.secrets["connections"]["postgresql"]["url"]
         if db_url.startswith("postgres://"):
             db_url = db_url.replace("postgres://", "postgresql://", 1)
-        if "pgbouncer=true" in db_url:
-            db_url = db_url.replace("pgbouncer=true", "").replace("?&", "?").strip("?&")
         return create_engine(db_url, pool_pre_ping=True)
     except Exception as e:
-        st.error(f"Erro na conexão: {e}")
+        st.error(f"Erro na conexão com o banco: {e}")
         return None
 
 ENGINE = get_engine()
 SessionLocal = sessionmaker(bind=ENGINE)
 
-def get_session():
-    return SessionLocal()
-
-# --- 4. MODELOS (Corrigidos com extend_existing para evitar InvalidRequestError) ---
+# --- 4. MODELOS ---
 class Project(Base):
     __tablename__ = 'projects'
     __table_args__ = {'extend_existing': True}
     id = Column(Integer, primary_key=True)
     name = Column(String, nullable=False)
-    user_id = Column(UUID(as_uuid=True)) 
-    tasks = relationship("Task", back_populates="project", cascade="all, delete", foreign_keys="Task.project_id")
+    user_id = Column(UUID(as_uuid=True))
+    tasks = relationship("Task", back_populates="project", cascade="all, delete")
 
 class Task(Base):
     __tablename__ = 'tasks'
@@ -56,23 +54,18 @@ class Task(Base):
     project_id = Column(Integer, ForeignKey('projects.id'))
     parent_id = Column(Integer, ForeignKey('tasks.id'), nullable=True)
     title = Column(String, nullable=False)
-    description = Column(String)
     status = Column(String, default="Pendente")
     priority = Column(String, default="Média")
     due_date = Column(DateTime)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    completed_at = Column(DateTime)
-    notes = Column(String)
-    user_id = Column(UUID(as_uuid=True)) 
+    user_id = Column(UUID(as_uuid=True))
     
-    project = relationship("Project", back_populates="tasks", foreign_keys=[project_id])
+    project = relationship("Project", back_populates="tasks")
     subtasks = relationship("Task", backref=backref('parent', remote_side=[id]))
 
-# Criar tabelas e refletir se necessário
 if ENGINE:
     Base.metadata.create_all(ENGINE)
 
-# --- 5. LÓGICA DE AUTENTICAÇÃO ---
+# --- 5. LÓGICA DE LOGIN ---
 def login_screen():
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
@@ -83,51 +76,60 @@ def login_screen():
             password = st.text_input("Senha", type="password", key="l_pass")
             if st.button("Login", use_container_width=True):
                 try:
-                    # Linha 86 corrigida: 4 espaços a mais que o 'try'
                     res = supabase.auth.sign_in_with_password({"email": email, "password": password})
-                    
                     if res.user:
                         st.session_state.user = res.user
-                        st.success("Logado com sucesso!")
                         st.rerun()
                 except Exception as e:
-                    st.error(f"Erro ao entrar: {e}")
-        
+                    st.error("Email ou senha incorretos.")
         with tab2:
             new_email = st.text_input("Novo Email", key="r_email")
             new_pass = st.text_input("Nova Senha", type="password", key="r_pass")
             if st.button("Cadastrar", use_container_width=True):
                 try:
                     supabase.auth.sign_up({"email": new_email, "password": new_pass})
-                    st.info("Verifique seu email para confirmar o cadastro!")
+                    st.info("Verifique seu email (ou tente logar se desativou a confirmação).")
                 except Exception as e:
-                    st.error(f"Erro no cadastro: {e}")
+                    st.error(f"Erro: {e}")
 
-# --- 6. FUNÇÕES DE SUPORTE ---
-def complete_task(task_id):
-    s = get_session()
-    t = s.query(Task).filter(Task.id == task_id, Task.user_id == uid).first()
-    if t:
-        t.status = "Concluído"
-        t.completed_at = datetime.utcnow()
-        s.commit()
-    s.close()
+if 'user' not in st.session_state:
+    login_screen()
+    st.stop()
 
-# --- 7. DASHBOARD E INTERFACE ---
+# --- 6. INÍCIO DA SESSÃO ÚNICA ---
+uid = st.session_state.user.id
+s = SessionLocal()
+
+# --- 7. SIDEBAR ---
 with st.sidebar:
-    st.title("⚙️ Painel")
-    
-    # AJUSTE SEGURO AQUI:
-    if 'user' in st.session_state and st.session_state.user:
-        # Tenta pegar o email de duas formas comuns (como objeto ou como dicionário)
-        user_email = getattr(st.session_state.user, 'email', 'Usuário Logado')
-        st.write(f"Conectado: {user_email}")
+    # Acesso seguro ao email do usuário
+    user_email = getattr(st.session_state.user, 'email', 'Usuário')
+    st.write(f"👤 {user_email}")
     
     if st.button("Sair"):
         supabase.auth.sign_out()
-        if 'user' in st.session_state:
-            del st.session_state.user
+        del st.session_state.user
         st.rerun()
+    
+    st.divider()
+    st.subheader("Meus Projetos")
+    
+    projects = s.query(Project).filter(Project.user_id == uid).all()
+    for p in projects:
+        col_p, col_d = st.columns([4, 1])
+        if col_p.button(f"📁 {p.name}", key=f"p_{p.id}", use_container_width=True):
+            st.session_state.active_project = p.id
+        if col_d.button("🗑️", key=f"del_p_{p.id}"):
+            s.delete(p)
+            s.commit()
+            st.rerun()
+            
+    with st.popover("➕ Novo Projeto", use_container_width=True):
+        new_p_name = st.text_input("Nome")
+        if st.button("Criar"):
+            s.add(Project(name=new_p_name, user_id=uid))
+            s.commit()
+            st.rerun()
 
 # --- 8. CONTEÚDO PRINCIPAL ---
 if "active_project" in st.session_state:
@@ -137,65 +139,44 @@ if "active_project" in st.session_state:
     if project:
         st.title(f"Projeto: {project.name}")
         
-        # --- MÉTRICAS ---
+        # Query de tarefas principais
         tasks = s.query(Task).filter(Task.project_id == p_id, Task.user_id == uid, Task.parent_id == None).all()
+        
+        # Métricas simples
         total = len(tasks)
         done = len([t for t in tasks if t.status == "Concluído"])
-        
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Total", total)
+        c1, c2 = st.columns(2)
+        c1.metric("Tarefas", total)
         c2.metric("Concluídas", done)
-        c3.metric("Progresso", f"{(done/total*100 if total>0 else 0):.0f}%")
         
-        # --- NOVA TAREFA ---
-        with st.expander("➕ Adicionar Nova Tarefa Principal"):
-            with st.form("f_task"):
-                t_title = st.text_input("O que precisa ser feito?")
+        # Formulário de Nova Tarefa
+        with st.expander("➕ Nova Tarefa"):
+            with st.form("new_task"):
+                t_title = st.text_input("Título")
                 t_priority = st.selectbox("Prioridade", ["Baixa", "Média", "Alta"])
-                t_date = st.date_input("Prazo", datetime.now() + timedelta(days=1))
-                if st.form_submit_button("Salvar Tarefa"):
-                    s.add(Task(title=t_title, priority=t_priority, due_date=t_date, project_id=p_id, user_id=uid))
-                    s.commit(); st.rerun()
-        
-        # --- LISTAGEM DE TAREFAS ---
+                t_date = st.date_input("Prazo")
+                if st.form_submit_button("Salvar"):
+                    new_t = Task(title=t_title, priority=t_priority, due_date=t_date, project_id=p_id, user_id=uid)
+                    s.add(new_t)
+                    s.commit()
+                    st.rerun()
+
+        # Listagem
         for t in tasks:
             with st.container(border=True):
-                c_cont, c_act = st.columns([4, 1.5])
+                col_t, col_a = st.columns([4, 1])
+                col_t.write(f"**{t.title}** ({t.priority})")
+                if col_a.button("🗑️", key=f"t_del_{t.id}"):
+                    s.delete(t)
+                    s.commit()
+                    st.rerun()
                 
-                with c_cont:
-                    if t.status == "Concluído":
-                        st.write(f"~~{t.title}~~")
-                    else:
-                        st.write(f"**{t.title}**")
-                        st.caption(f"🎯 {t.priority} | 📅 {t.due_date.strftime('%d/%m/%Y')}")
-
-                with c_act:
-                    cb1, cb2 = st.columns(2)
-                    if t.status != "Concluído" and cb1.button("✅", key=f"ok_{t.id}"):
-                        complete_task(t.id); st.rerun()
-                    if cb2.button("🗑️", key=f"del_{t.id}"):
-                        s.delete(t); s.commit(); st.rerun()
-                
-                # --- SUBTASKS ---
-                subs = s.query(Task).filter(Task.parent_id == t.id, Task.user_id == uid).all()
+                # Subtasks
+                subs = s.query(Task).filter(Task.parent_id == t.id).all()
                 for sb in subs:
-                    st.write(f" ↳ {'~~' if sb.status == 'Concluído' else ''}{sb.title}{'~~' if sb.status == 'Concluído' else ''}")
-                
-                if st.button("➕ Subtask", key=f"btn_sub_{t.id}"):
-                    st.session_state[f"show_sub_{t.id}"] = True
-                
-                if st.session_state.get(f"show_sub_{t.id}"):
-                    with st.form(f"form_sub_{t.id}"):
-                        sub_t = st.text_input("Nome da Subtask")
-                        if st.form_submit_button("Adicionar Subtask"):
-                            s.add(Task(title=sub_t, parent_id=t.id, project_id=p_id, user_id=uid))
-                            s.commit(); st.rerun()
+                    st.caption(f"  ↳ {sb.title}")
 else:
-    st.info("Selecione um projeto na barra lateral para começar.")
+    st.info("Selecione um projeto na barra lateral.")
 
+# --- 9. FECHAMENTO SEGURO ---
 s.close()
-
-
-
-
-
