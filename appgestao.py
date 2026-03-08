@@ -163,13 +163,27 @@ if "active_project" in st.session_state:
         # Formulário de Nova Tarefa
         with st.expander("➕ Nova Tarefa"):
             with st.form("new_task"):
-                with st.container(border=True):
-                col_t, col_st, col_time, col_a = st.columns([3, 1, 1, 1])
+                t_title = st.text_input("Título da Tarefa")
+                # Adicionando as Áreas que você pediu
+                t_area = st.selectbox("Área Responsável", ["Financeiro", "Operacional", "Vendas", "RH", "TI", "Diretoria"])
+                t_priority = st.selectbox("Prioridade", ["Baixa", "Média", "Alta"], index=1)
+                t_date = st.date_input("Prazo Final")
                 
-                with col_t:
-                    st.write(f"**{t.title}**")
-                    area_nome = t.area if t.area else "Sem Área"
-                    st.caption(f"📍 {area_nome} | 📅 {t.due_date.strftime('%d/%m') if t.due_date else ''}")
+                if st.form_submit_button("Salvar Tarefa"):
+                    if t_title:
+                        new_t = Task(
+                            title=t_title, 
+                            area=t_area, 
+                            priority=t_priority, 
+                            due_date=datetime.combine(t_date, datetime.min.time()), 
+                            project_id=p_id, 
+                            user_id=uid
+                        )
+                        s.add(new_t)
+                        s.commit()
+                        st.rerun()
+                    else:
+                        st.error("Dê um título para a tarefa!")
 
                 with col_st:
                     status_options = ["Pendente", "Em Andamento", "Concluído"]
