@@ -140,7 +140,11 @@ if "active_project" in st.session_state:
         st.title(f"Projeto: {project.name}")
         
         # Query de tarefas principais
-        tasks = s.query(Task).filter(Task.project_id == p_id, Task.user_id == uid, Task.parent_id == None).all()
+        tasks = s.query(Task).filter(
+    Task.project_id == p_id, 
+    Task.user_id == uid, 
+    Task.parent_id.is_(None)  # Use .is_(None) em vez de == None
+).all()
         
         # Métricas simples
         total = len(tasks)
@@ -172,7 +176,10 @@ if "active_project" in st.session_state:
                     st.rerun()
                 
                 # Subtasks
-                subs = s.query(Task).filter(Task.parent_id == t.id).all()
+                subs = s.query(Task).filter(
+    Task.parent_id == t.id,
+    Task.user_id == uid
+).all()
                 for sb in subs:
                     st.caption(f"  ↳ {sb.title}")
 else:
@@ -180,3 +187,4 @@ else:
 
 # --- 9. FECHAMENTO SEGURO ---
 s.close()
+
