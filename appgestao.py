@@ -13,29 +13,33 @@ st.set_page_config(page_title="TaskProd Pro Cloud", layout="wide", page_icon="�
 # --- CONEXÃO SUPABASE (POSTGRESQL) ---
 def get_engine():
     try:
-        # Puxa a URL dos Secrets do Streamlit
-        # Formato esperado: postgresql://postgres:[SENHA]@db.[ID].supabase.co:6543/postgres
+        # Puxa a URL do Secrets
         db_url = st.secrets["connections"]["postgresql"]["url"]
         
-        # Correção de protocolo para SQLAlchemy
+        # Correção para garantir postgresql://
         if db_url.startswith("postgres://"):
             db_url = db_url.replace("postgres://", "postgresql://", 1)
         
-        # Configurações de estabilidade para Banco em Nuvem
+        # Adiciona sslmode=require se não estiver na URL
+        if "sslmode=require" not in db_url:
+            separator = "&" if "?" in db_url else "?"
+            db_url += f"{separator}sslmode=require"
+
         return create_engine(
             db_url,
-            pool_size=5,
-            max_overflow=10,
-            pool_pre_ping=True, # Testa a conexão antes de usar (evita quedas)
-            connect_args={"sslmode": "require"} # Supabase exige SSL
+            pool_size=10,         # Aumentado para lidar com o Pooler
+            max_overflow=20,
+            pool_timeout=30,      # Espera até 30s antes de dar erro
+            pool_recycle=1800,    # Reinicia conexões a cada 30min
+            pool_pre_ping=True,    # Testa se a conexão caiu antes de cada comando
         )
     except Exception as e:
-        st.error("Erro ao ler credenciais do Banco de Dados nos Secrets.")
+        st.error(f"Erro Crítico na Configuração do Banco: {e}")
         st.stop()
 
 ENGINE = get_engine()
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=ENGINE)
 Base = declarative_base()
-SessionLocal = sessionmaker(bind=ENGINE)
 
 # --- MODELOS DO BANCO ---
 class Project(Base):
