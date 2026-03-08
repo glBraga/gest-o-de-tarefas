@@ -136,64 +136,97 @@ if "active_project" in st.session_state:
     project = s.query(Project).filter(Project.id == p_id, Project.user_id == uid).first()
     
     if project:
-        st.title(f"Projeto: {project.name}")
-        tasks = s.query(Task).filter(Task.project_id == p_id, Task.user_id == uid, Task.parent_id == None).all()
+        tab_tasks, tab_dash = st.tabs(["📝 Minhas Tarefas", "📊 Dashboard de Performance"])
         
-        c1, c2 = st.columns(2)
-        c1.metric("Tarefas", len(tasks))
-        c2.metric("Concluídas", len([t for t in tasks if t.status == "Concluído"]))
-        
-        with st.expander("➕ Nova Tarefa"):
-            with st.form("new_task"):
-                t_title = st.text_input("Título")
-                t_area = st.selectbox("Área", ["Financeiro", "Operacional", "Vendas", "RH", "TI", "Diretoria"])
-                t_priority = st.selectbox("Prioridade", ["Baixa", "Média", "Alta"], index=1)
-                t_date = st.date_input("Prazo")
-                if st.form_submit_button("Salvar"):
-                    if t_title:
+        with tab_tasks:
+            st.title(f"Projeto: {project.name}")
+            tasks = s.query(Task).filter(Task.project_id == p_id, Task.user_id == uid, Task.parent_id.is_(None)).all()
+            
+            # Métricas rápidas no topo
+            m1, m2, m3 = st.columns(3)
+            m1.metric("Total", len(tasks))
+            m2.metric("Concluídas", len([t for t in tasks if t.status == "Concluído"]))
+            total_horas = sum((t.total_seconds or 0) for t in tasks) / 3600
+            m3.metric("Tempo Investido", f"{total_horas:.1f}h")
+            
+            with st.expander("➕ Nova Tarefa"):
+                with st.form("new_task"):
+                    t_title = st.text_input("Título")
+                    t_area = st.selectbox("Área", ["Financeiro", "Operacional", "Vendas", "RH", "TI", "Diretoria"])
+                    t_priority = st.selectbox("Prioridade", ["Baixa", "Média", "Alta"], index=1)
+                    t_date = st.date_input("Prazo")
+                    if st.form_submit_button("Salvar"):
                         new_t = Task(title=t_title, area=t_area, priority=t_priority, due_date=datetime.combine(t_date, datetime.min.time()), project_id=p_id, user_id=uid)
                         s.add(new_t)
                         s.commit()
                         st.rerun()
 
-        # --- LISTAGEM DE TAREFAS (AQUI ESTAVA O ERRO) ---
-        for t in tasks:
-            with st.container(border=True):
-                col_t, col_st, col_time, col_a = st.columns([3, 1, 1, 1])
+            for t in tasks:
+                with st.container(border=True):
+                    col_t, col_st, col_time, col_a = st.columns([3, 1, 1, 1])
+                    
+                    with col_t:
+                        # Indicador Visual de Status
+                        status_icon = "⚪" if t.status == "Pendente" else "🟡" if t.status == "Em Andamento" else "🟢"
+                        st.write(f"{status_icon} **{t.title}**")
+                        st.caption(f"📍 {t.area} | 📅 {t.due_date.strftime('%d/%m') if t.due_date else ''}")
+
+                    with col_st:
+                        status_opts = ["Pendente", "Em Andamento", "Concluído"]
+                        curr_idx = status_opts.index(t.status) if t.status in status_opts else 0
+                        new_status = st.selectbox("Status", status_opts, index=curr_idx, key=f"st_{t.id}", label_visibility="collapsed")
+                        if new_status != t.status:
+                            t.status = new_status
+                            s.commit()
+                            st.rerun()
+
+                    with col_time:
+                        if t.start_time is None:
+                            if st.button("▶️", key=f"play_{t.id}"):
+                                t.start_time = datetime.now()
+                                t.status = "Em Andamento" # AUTOMAÇÃO AQUI
+                                s.commit()
+                                st.rerun()
+                        else:
+                            if st.button("⏹️", key=f"stop_{t.id}", type="primary"):
+                                diff = (datetime.now() - t.start_time).total_seconds()
+                                t.total_seconds += int(diff)
+                                t.start_time = None
+                                s.commit()
+                                st.rerun()
+                        
+                        mins = (t.total_seconds or 0) // 60
+                        # Se estiver rodando, mostra o alerta amber
+                        if t.start_time:
+                            st.warning(f"⏳ {mins}m...")
+                        else:
+                            st.caption(f"⏱️ {mins} min")
+
+                    with col_a:
+                        if st.button("🗑️", key=f"t_del_{t.id}"):
+                            s.delete(t)
+                            s.commit()
+                            st.rerun()
+
+        with tab_dash:
+            st.header("Análise por Área")
+            if tasks:
+                df = pd.DataFrame([{
+                    'Área': t.area,
+                    'Minutos': (t.total_seconds or 0) / 60,
+                    'Status': t.status
+                } for t in tasks])
                 
-                with col_t:
-                    st.write(f"**{t.title}**")
-                    st.caption(f"📍 {t.area} | 📅 {t.due_date.strftime('%d/%m') if t.due_date else ''}")
-
-                with col_st:
-                    status_opts = ["Pendente", "Em Andamento", "Concluído"]
-                    curr_idx = status_opts.index(t.status) if t.status in status_opts else 0
-                    new_status = st.selectbox("Status", status_opts, index=curr_idx, key=f"st_{t.id}", label_visibility="collapsed")
-                    if new_status != t.status:
-                        t.status = new_status
-                        s.commit()
-                        st.rerun()
-
-                with col_time:
-                    if t.start_time is None:
-                        if st.button("▶️", key=f"play_{t.id}"):
-                            t.start_time = datetime.now()
-                            s.commit()
-                            st.rerun()
-                    else:
-                        if st.button("⏹️", key=f"stop_{t.id}", type="primary"):
-                            diff = (datetime.now() - t.start_time).total_seconds()
-                            t.total_seconds += int(diff)
-                            t.start_time = None
-                            s.commit()
-                            st.rerun()
-                    st.caption(f"⏱️ {(t.total_seconds or 0) // 60} min")
-
-                with col_a:
-                    if st.button("🗑️", key=f"t_del_{t.id}"):
-                        s.delete(t)
-                        s.commit()
-                        st.rerun()
+                # Gráfico de Barras - Tempo por Área
+                area_chart = df.groupby('Área')['Minutos'].sum().reset_index()
+                st.subheader("Tempo Gasto por Departamento (min)")
+                st.bar_chart(data=area_chart, x='Área', y='Minutos')
+                
+                # Tabela de Detalhamento
+                st.subheader("Detalhamento de Custos/Tempo")
+                st.dataframe(df, use_container_width=True)
+            else:
+                st.info("Sem dados para gerar o dashboard ainda.")
                 
                 # Subtasks
                 subs = s.query(Task).filter(Task.parent_id == t.id).all()
