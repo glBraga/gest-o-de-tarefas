@@ -6,6 +6,7 @@ from sqlalchemy import create_engine, Column, Integer, String, DateTime, Boolean
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 from sqlalchemy.dialects.postgresql import UUID # Necessário para o user_id do Supabase
+import sqlalchemy # adicione esta
 import os
 from supabase import create_client
 
@@ -36,6 +37,15 @@ def get_engine():
 
 ENGINE = get_engine()
 SessionLocal = sessionmaker(bind=ENGINE)
+
+Base = declarative_base()
+# Seus modelos Project e Task aqui...
+
+# COMANDO DE CHOQUE:
+if ENGINE:
+    # Isso força o SQLAlchemy a olhar para o banco real e ver as colunas novas
+    Base.metadata.reflect(bind=ENGINE) 
+    Base.metadata.create_all(ENGINE)
 
 def get_session():
     return SessionLocal()
@@ -147,7 +157,11 @@ if "active_project" in st.session_state:
         st.title(f"Projeto: {project.name}")
         
         # --- MÉTRICAS ---
-        tasks = s.query(Task).filter(Task.project_id == p_id, Task.user_id == uid, Task.parent_id == None).all()
+        tasks = s.query(Task).filter(
+    Task.project_id == p_id, 
+    text("user_id = :uid").bindparams(uid=uid), # Força o SQL puro na coluna
+    Task.parent_id == None
+).all()
         total = len(tasks)
         done = len([t for t in tasks if t.status == "Concluído"])
         
@@ -204,3 +218,4 @@ else:
 
 
 s.close()
+
