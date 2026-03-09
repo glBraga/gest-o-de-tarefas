@@ -139,173 +139,107 @@ if "active_project" in st.session_state:
         tab_tasks, tab_dash = st.tabs(["📝 Minhas Tarefas", "📊 Dashboard de Performance"])
         
         with tab_tasks:
-            # --- Listagem em Formato de Tabela (Inspirado na sua foto) ---
-        if tasks:
-            # Criando o DataFrame para exibição
-            df_display = pd.DataFrame([{
-                "ID": t.id,
-                "Tarefa": t.title,
-                "Status": t.status,
-                "Área": t.area,
-                "Solicitante": t.priority, # Usando priority como solicitante conforme seu código anterior
-                "Prazo": t.due_date.strftime('%d/%m/%Y') if t.due_date else "-"
-            } for t in tasks])
+            # TELA DE DETALHES (Só aparece se houver uma tarefa selecionada)
+            if "detail_view" in st.session_state:
+                task_detail = s.query(Task).get(st.session_state.detail_view)
+                
+                if task_detail:
+                    if st.button("⬅️ Voltar para a Lista"):
+                        del st.session_state.detail_view
+                        st.rerun()
 
-            st.write("### 📋 Lista de Tarefas")
-            
-            # Tabela Interativa
-            # O st.dataframe permite selecionar linhas se configurarmos o selection_mode
-            event = st.dataframe(
-                df_display, 
-                use_container_width=True, 
-                hide_index=True,
-                on_select="rerun",
-                selection_mode="single-row"
-            )
+                    st.divider()
+                    st.header(f"🔍 Detalhes: {task_detail.title}")
+                    
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.info(f"**Área:** {task_detail.area}")
+                        status_icon = "⚪" if task_detail.status == "Pendente" else "🟡" if task_detail.status == "Em Andamento" else "🟢"
+                        st.write(f"**Status Atual:** {status_icon} {task_detail.status}")
+                        
+                        # Cronômetro nos detalhes
+                        if task_detail.start_time:
+                            st.warning("⏳ Cronômetro em execução...")
+                        
+                        if st.button("✅ Concluir Tarefa", use_container_width=True, type="primary"):
+                            task_detail.status = "Concluído"
+                            task_detail.start_time = None # Para o tempo se estiver rodando
+                            s.commit()
+                            st.rerun()
+                    
+                    with col2:
+                        # Campo de Observação Rico (armazenando no campo priority conforme seu código)
+                        new_obs = st.text_area("📝 Observações/Notas", value=task_detail.priority if task_detail.priority else "", height=150)
+                        if st.button("Salvar Observações"):
+                            task_detail.priority = new_obs
+                            s.commit()
+                            st.success("Observação salva!")
 
-            # Lógica para "Abrir Detalhes" em nova tela
-            if len(event.selection.rows) > 0:
-                selected_row = event.selection.rows[0]
-                task_id = df_display.iloc[selected_row]["ID"]
-                st.session_state.detail_view = task_id
-                st.rerun()
-
-        # --- TELA DE DETALHES (OVERLAY) ---
-        if "detail_view" in st.session_state:
-            task_detail = s.query(Task).get(st.session_state.detail_view)
-            
-            if task_detail:
-                # Botão para Voltar
-                if st.button("⬅️ Voltar para a Lista"):
+                    # --- SEÇÃO DE SUBTASKS ---
+                    st.subheader("📌 Subtarefas")
+                    with st.expander("➕ Adicionar Subtask"):
+                        sub_t = st.text_input("Título da Subtarefa")
+                        if st.button("Criar"):
+                            s.add(Task(title=sub_t, parent_id=task_detail.id, project_id=p_id, user_id=uid, status="Pendente"))
+                            s.commit()
+                            st.rerun()
+                    
+                    subs = s.query(Task).filter(Task.parent_id == task_detail.id).all()
+                    for sb in subs:
+                        c1, c2 = st.columns([0.1, 0.9])
+                        is_ok = c1.checkbox("", value=(sb.status == "Concluído"), key=f"det_sub_{sb.id}")
+                        c2.write(sb.title)
+                        if is_ok != (sb.status == "Concluído"):
+                            sb.status = "Concluído" if is_ok else "Pendente"
+                            s.commit()
+                            st.rerun()
+                else:
                     del st.session_state.detail_view
                     st.rerun()
 
-                st.divider()
-                st.header(f"🔍 Detalhes: {task_detail.title}")
+            else:
+                # TELA DE LISTAGEM (GRID)
+                st.title(f"Projeto: {project.name}")
+                tasks = s.query(Task).filter(Task.project_id == p_id, Task.user_id == uid, Task.parent_id == None).all()
                 
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.info(f"**Área:** {task_detail.area}")
-                    # Automação do Status com bolinha
-                    status_color = "🟡" if task_detail.status == "Em Andamento" else "🟢" if task_detail.status == "Concluído" else "⚪"
-                    st.write(f"**Status Atual:** {status_color} {task_detail.status}")
-                
-                with col2:
-                    # Campo de Observação Rico
-                    new_obs = st.text_area("📝 Observações/Notas de Campo", value=task_detail.priority if task_detail.priority else "")
-                    if st.button("Salvar Observação"):
-                        task_detail.priority = new_obs
-                        s.commit()
-                        st.success("Salvo!")
+                if tasks:
+                    df_display = pd.DataFrame([{
+                        "ID": t.id,
+                        "Tarefa": t.title,
+                        "Status": t.status,
+                        "Área": t.area,
+                        "Prazo": t.due_date.strftime('%d/%m/%Y') if t.due_date else "-"
+                    } for t in tasks])
 
-                # Seção de Subtasks dentro dos Detalhes
-                st.subheader("📌 Subtarefas")
-                new_sub = st.text_input("Adicionar nova subtask...")
-                if st.button("➕ Adicionar"):
-                    s.add(Task(title=new_sub, parent_id=task_detail.id, project_id=p_id, user_id=uid))
-                    s.commit()
-                    st.rerun()
-                
-                subs = s.query(Task).filter(Task.parent_id == task_detail.id).all()
-                for sb in subs:
-                    c1, c2 = st.columns([0.1, 0.9])
-                    checked = c1.checkbox("", value=(sb.status == "Concluído"), key=f"det_sub_{sb.id}")
-                    c2.write(sb.title)
-                    if checked != (sb.status == "Concluído"):
-                        sb.status = "Concluído" if checked else "Pendente"
-                        s.commit()
-                        st.rerun()
-            st.title(f"Projeto: {project.name}")
-            tasks = s.query(Task).filter(Task.project_id == p_id, Task.user_id == uid, Task.parent_id.is_(None)).all()
-            
-            # Formulário de Nova Tarefa (Incluindo Observação)
-            with st.expander("➕ Nova Tarefa Principal"):
-                with st.form("new_task"):
-                    t_title = st.text_input("Título")
-                    t_area = st.selectbox("Área", ["Financeiro", "Operacional", "Vendas", "RH", "TI", "Diretoria"])
-                    t_obs = st.text_area("Observação/Notas")
-                    t_priority = st.selectbox("Prioridade", ["Baixa", "Média", "Alta"], index=1)
-                    t_date = st.date_input("Prazo")
-                    if st.form_submit_button("Salvar"):
-                        new_t = Task(title=t_title, area=t_area, priority=t_priority, due_date=datetime.combine(t_date, datetime.min.time()), 
-                                     project_id=p_id, user_id=uid, status="Pendente")
-                        # Usando o campo 'status' para salvar a observação se você ainda não criou a coluna (abaixo explico como criar)
-                        # Se você já rodou o SQL de observação, use t.observation
-                        s.add(new_t)
-                        s.commit()
-                        st.rerun()
-
-            for t in tasks:
-                with st.container(border=True):
-                    col_t, col_st, col_time, col_a = st.columns([3, 1, 1, 1])
+                    st.info("💡 Clique em uma linha para ver Detalhes, Observações e Subtasks.")
                     
-                    with col_t:
-                        status_icon = "⚪" if t.status == "Pendente" else "🟡" if t.status == "Em Andamento" else "🟢"
-                        st.write(f"{status_icon} **{t.title}**")
-                        if t.area: st.caption(f"📍 {t.area}")
+                    # Grid Interativo
+                    event = st.dataframe(
+                        df_display, 
+                        use_container_width=True, 
+                        hide_index=True,
+                        on_select="rerun",
+                        selection_mode="single-row"
+                    )
 
-                    with col_st:
-                        # BOTÃO CONCLUIR AUTOMÁTICO
-                        if t.status != "Concluído":
-                            if st.button("✅ Concluir", key=f"done_{t.id}", use_container_width=True):
-                                t.status = "Concluído"
-                                t.start_time = None # Para o cronômetro se estiver rodando
-                                s.commit()
-                                st.rerun()
-                        else:
-                            st.success("Tarefa OK")
+                    if len(event.selection.rows) > 0:
+                        selected_row = event.selection.rows[0]
+                        st.session_state.detail_view = int(df_display.iloc[selected_row]["ID"])
+                        st.rerun()
+                else:
+                    st.write("Crie sua primeira tarefa abaixo.")
 
-                    with col_time:
-                        if t.start_time is None:
-                            if st.button("▶️", key=f"play_{t.id}"):
-                                t.start_time = datetime.now()
-                                t.status = "Em Andamento"
-                                s.commit()
-                                st.rerun()
-                        else:
-                            if st.button("⏹️", key=f"stop_{t.id}", type="primary"):
-                                diff = (datetime.now() - t.start_time).total_seconds()
-                                t.total_seconds += int(diff)
-                                t.start_time = None
-                                s.commit()
-                                st.rerun()
-                        mins = (t.total_seconds or 0) // 60
-                        st.caption(f"⏱️ {mins} min")
-
-                    with col_a:
-                        if st.button("🗑️", key=f"t_del_{t.id}"):
-                            s.delete(t)
+                with st.expander("➕ Nova Tarefa Principal"):
+                    with st.form("new_task_main"):
+                        t_title = st.text_input("Título")
+                        t_area = st.selectbox("Área", ["Financeiro", "Operacional", "Vendas", "RH", "TI", "Diretoria"])
+                        t_date = st.date_input("Prazo")
+                        if st.form_submit_button("Salvar"):
+                            new_t = Task(title=t_title, area=t_area, due_date=datetime.combine(t_date, datetime.min.time()), 
+                                         project_id=p_id, user_id=uid, status="Pendente")
+                            s.add(new_t)
                             s.commit()
                             st.rerun()
-
-                    # --- CAMPO OBSERVAÇÃO (Editável) ---
-                    new_obs = st.text_input("📝 Observação:", value=t.priority if t.priority else "", key=f"obs_{t.id}")
-                    if new_obs != t.priority:
-                        t.priority = new_obs # Usando priority temporariamente como campo de texto livre
-                        s.commit()
-
-                    # --- SEÇÃO DE SUBTASKS ---
-                    st.divider()
-                    sub_col1, sub_col2 = st.columns([2,1])
-                    with sub_col1:
-                        subs = s.query(Task).filter(Task.parent_id == t.id).all()
-                        for sb in subs:
-                            # Checkbox para marcar subtask como OK
-                            is_done = sb.status == "Concluído"
-                            check = st.checkbox(f"{sb.title}", value=is_done, key=f"subcheck_{sb.id}")
-                            if check != is_done:
-                                sb.status = "Concluído" if check else "Pendente"
-                                s.commit()
-                                st.rerun()
-                    
-                    with sub_col2:
-                        with st.popover("➕ Subtask"):
-                            sub_title = st.text_input("Título da Subtask", key=f"input_sub_{t.id}")
-                            if st.button("Adicionar", key=f"btn_sub_{t.id}"):
-                                new_sub = Task(title=sub_title, project_id=p_id, user_id=uid, parent_id=t.id, status="Pendente")
-                                s.add(new_sub)
-                                s.commit()
-                                st.rerun()
 
         with tab_dash:
             st.header("Análise por Área")
